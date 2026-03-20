@@ -16,6 +16,21 @@ bash <(curl -fsSL https://raw.githubusercontent.com/mozhenxiong80-commits/ssr/ma
 SSR_PORT=8443 SSR_PASSWORD='改成你的强密码' bash <(curl -fsSL https://raw.githubusercontent.com/mozhenxiong80-commits/ssr/main/install-ssr-ubuntu24.sh)
 ```
 
+## BBR 加速
+
+原生 `BBR` 是最稳的一种做法，不装第三方魔改内核，只启用系统已有的 `tcp_bbr + fq`。
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/mozhenxiong80-commits/ssr/main/install-bbr-ubuntu24.sh)
+```
+
+如果你打算一次装完，按这个顺序执行：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/mozhenxiong80-commits/ssr/main/install-ssr-ubuntu24.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/mozhenxiong80-commits/ssr/main/install-bbr-ubuntu24.sh)
+```
+
 ## Shadowrocket
 
 安装完成后，脚本会输出两种信息：
@@ -36,4 +51,5 @@ SSR_PORT=8443 SSR_PASSWORD='改成你的强密码' bash <(curl -fsSL https://raw
 systemctl status ssr
 journalctl -u ssr -f
 systemctl restart ssr
+sysctl net.ipv4.tcp_congestion_control
 ```
