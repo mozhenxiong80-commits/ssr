@@ -12,6 +12,12 @@
 bash <(curl -fsSL https://raw.githubusercontent.com/mozhenxiong80-commits/ssr/main/install-ssr-bbr.sh)
 ```
 
+如果你想随机端口：
+
+```bash
+SSR_PORT=random bash <(curl -fsSL https://raw.githubusercontent.com/mozhenxiong80-commits/ssr/main/install-ssr-bbr.sh)
+```
+
 当前主推环境：
 
 - `Ubuntu 20.04 LTS`: 已实机验证，`SSR + BBR` 都可用

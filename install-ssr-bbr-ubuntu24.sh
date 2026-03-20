@@ -75,6 +75,14 @@ detect_host() {
   fi
 }
 
+random_port() {
+  "${PYTHON_BIN}" - <<'PY'
+import random
+
+print(random.randint(20000, 50000))
+PY
+}
+
 detect_pkg_manager() {
   if command -v apt-get >/dev/null 2>&1; then
     PKG_MANAGER="apt-get"
@@ -288,16 +296,6 @@ EOF
   exit 1
 }
 
-[[ "${PORT}" =~ ^[0-9]+$ ]] || {
-  echo "SSR_PORT 必须是数字"
-  exit 1
-}
-
-if (( PORT < 1 || PORT > 65535 )); then
-  echo "SSR_PORT 必须在 1-65535 之间"
-  exit 1
-fi
-
 detect_pkg_manager
 install_dependencies
 
@@ -307,6 +305,20 @@ need_cmd tar
 need_cmd sysctl
 
 detect_python
+
+if [[ "${PORT}" == "random" || "${PORT}" == "RANDOM" ]]; then
+  PORT="$(random_port)"
+fi
+
+[[ "${PORT}" =~ ^[0-9]+$ ]] || {
+  echo "SSR_PORT 必须是数字，或者使用 SSR_PORT=random"
+  exit 1
+}
+
+if (( PORT < 1 || PORT > 65535 )); then
+  echo "SSR_PORT 必须在 1-65535 之间"
+  exit 1
+fi
 
 if [[ -z "${PASSWORD}" ]]; then
   PASSWORD="$(openssl rand -base64 24 | tr -d '\n' | tr '/+' '_-')"
