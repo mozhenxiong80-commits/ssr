@@ -51,6 +51,20 @@ print(json.dumps(sys.argv[1]))
 PY
 }
 
+url_encode() {
+  "${PYTHON_BIN}" - "$1" <<'PY'
+import sys
+
+value = sys.argv[1]
+try:
+    from urllib.parse import quote
+except ImportError:
+    from urllib import quote
+
+print(quote(value, safe=''))
+PY
+}
+
 detect_host() {
   local ip=""
   ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
@@ -215,6 +229,7 @@ print_summary() {
   local query=""
   local payload=""
   local ssr_url=""
+  local shadowrocket_url=""
 
   password_b64="$(base64_nopad "$PASSWORD")"
   remarks_b64="$(base64_nopad "$REMARKS")"
@@ -229,6 +244,7 @@ print_summary() {
 
   payload="${host}:${PORT}:${PROTOCOL}:${METHOD}:${OBFS}:${password_b64}/?${query}"
   ssr_url="ssr://$(base64_nopad "$payload")"
+  shadowrocket_url="shadowrocket://add/$(url_encode "${ssr_url}")"
 
   cat <<EOF
 
@@ -249,6 +265,9 @@ obfs_param: ${OBFS_PARAM}
 
 Shadowrocket 导入链接
 ${ssr_url}
+
+小火箭一键导入
+${shadowrocket_url}
 
 BBR 状态
 ${BBR_STATUS}

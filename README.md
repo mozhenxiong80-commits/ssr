@@ -18,6 +18,11 @@ bash <(curl -fsSL https://raw.githubusercontent.com/mozhenxiong80-commits/ssr/ma
 - `Ubuntu 24.04`: 兼容
 - `CentOS 7`: `SSR` 可装，`BBR` 取决于内核；老内核会自动跳过
 
+安装完成后，主脚本会额外输出两种可复制链接：
+
+- `ssr://...`
+- `shadowrocket://add/...`
+
 建议把 `main` 替换成你自己的固定 commit 或 tag，再执行：
 
 ```bash
