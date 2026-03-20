@@ -1,6 +1,6 @@
-# SSR Ubuntu 24.04 一键安装
+# SSR 一键安装
 
-这个仓库放的是一份可审计的本地安装脚本，不是直接执行陌生人的远程脚本。
+这个仓库放的是一份可审计的本地安装脚本，不是直接执行陌生人的远程脚本。当前合成脚本会自动识别 `apt-get / yum / dnf`，适用于 `Ubuntu 24.04` 和大多数 `CentOS / Rocky / AlmaLinux` 环境。
 
 ## SSH 一行安装
 
@@ -9,6 +9,8 @@
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/mozhenxiong80-commits/ssr/main/install-ssr-bbr-ubuntu24.sh)
 ```
+
+如果是 `CentOS 7`，SSR 通常可以装上，但 `BBR` 是否能启用取决于你的内核；默认老内核不支持时，脚本会自动跳过 BBR，不会让整个安装失败。
 
 建议把 `main` 替换成你自己的固定 commit 或 tag，再执行：
 

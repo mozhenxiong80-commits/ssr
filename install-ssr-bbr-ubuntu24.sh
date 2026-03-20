@@ -7,7 +7,6 @@ REPO_TARBALL_URL="https://github.com/ssrlive/shadowsocksr/archive/046078c9568bee
 UPSTREAM_COMMIT="046078c9568bee891f0ac74085ee82fc08e99e3e"
 INSTALL_DIR="/opt/shadowsocksr"
 SERVICE_NAME="ssr"
-SERVICE_USER="ssr"
 BBR_MODULES_FILE="/etc/modules-load.d/bbr.conf"
 BBR_SYSCTL_FILE="/etc/sysctl.d/99-bbr.conf"
 
@@ -18,7 +17,10 @@ PROTOCOL="${SSR_PROTOCOL:-auth_aes128_md5}"
 PROTO_PARAM="${SSR_PROTOCOL_PARAM:-}"
 OBFS="${SSR_OBFS:-tls1.2_ticket_auth_compatible}"
 OBFS_PARAM="${SSR_OBFS_PARAM:-}"
-REMARKS="${SSR_REMARKS:-SSR-Ubuntu24}"
+REMARKS="${SSR_REMARKS:-SSR-Server}"
+PKG_MANAGER=""
+PKG_FAMILY=""
+BBR_STATUS="未检测"
 
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -56,12 +58,79 @@ detect_host() {
   fi
 }
 
+detect_pkg_manager() {
+  if command -v apt-get >/dev/null 2>&1; then
+    PKG_MANAGER="apt-get"
+    PKG_FAMILY="deb"
+    return
+  fi
+  if command -v dnf >/dev/null 2>&1; then
+    PKG_MANAGER="dnf"
+    PKG_FAMILY="rpm"
+    return
+  fi
+  if command -v yum >/dev/null 2>&1; then
+    PKG_MANAGER="yum"
+    PKG_FAMILY="rpm"
+    return
+  fi
+
+  echo "未识别到支持的包管理器，当前脚本只支持 apt-get / dnf / yum"
+  exit 1
+}
+
+install_dependencies() {
+  case "${PKG_MANAGER}" in
+    apt-get)
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y --no-install-recommends ca-certificates curl openssl python3 tar xz-utils
+      ;;
+    dnf)
+      dnf install -y ca-certificates curl openssl python3 tar xz
+      ;;
+    yum)
+      yum install -y ca-certificates curl openssl tar xz
+      if ! command -v python3 >/dev/null 2>&1; then
+        yum install -y epel-release || true
+        yum install -y python3
+      fi
+      ;;
+  esac
+}
+
+configure_firewall() {
+  if command -v ufw >/dev/null 2>&1; then
+    if ufw status 2>/dev/null | grep -q '^Status: active'; then
+      ufw allow "${PORT}/tcp" >/dev/null
+      ufw allow "${PORT}/udp" >/dev/null
+    fi
+    return
+  fi
+
+  if command -v firewall-cmd >/dev/null 2>&1; then
+    if systemctl is-active --quiet firewalld 2>/dev/null; then
+      firewall-cmd --permanent --add-port="${PORT}/tcp" >/dev/null
+      firewall-cmd --permanent --add-port="${PORT}/udp" >/dev/null
+      firewall-cmd --reload >/dev/null
+    fi
+  fi
+}
+
 enable_bbr() {
-  modprobe tcp_bbr
+  if ! command -v modprobe >/dev/null 2>&1; then
+    BBR_STATUS="跳过: 系统没有 modprobe"
+    return
+  fi
+
+  if ! modprobe tcp_bbr >/dev/null 2>&1; then
+    BBR_STATUS="跳过: 当前内核未提供 tcp_bbr"
+    return
+  fi
 
   if ! sysctl net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qw bbr; then
-    echo "当前内核未提供 tcp_bbr，无法启用原生 BBR"
-    exit 1
+    BBR_STATUS="跳过: 当前内核不支持原生 BBR"
+    return
   fi
 
   cat >"${BBR_MODULES_FILE}" <<'EOF'
@@ -73,7 +142,11 @@ net.core.default_qdisc=fq
 net.ipv4.tcp_congestion_control=bbr
 EOF
 
-  sysctl --system >/dev/null
+  if sysctl --system >/dev/null 2>&1; then
+    BBR_STATUS="已启用"
+  else
+    BBR_STATUS="跳过: sysctl 应用失败"
+  fi
 }
 
 print_summary() {
@@ -102,6 +175,7 @@ print_summary() {
 
 安装完成
 upstream commit: ${UPSTREAM_COMMIT}
+package manager: ${PKG_MANAGER}
 
 Shadowrocket 手动填写
 host: ${host}
@@ -117,9 +191,10 @@ Shadowrocket 导入链接
 ${ssr_url}
 
 BBR 状态
-current qdisc: $(sysctl -n net.core.default_qdisc)
-current congestion control: $(sysctl -n net.ipv4.tcp_congestion_control)
-available congestion control: $(sysctl -n net.ipv4.tcp_available_congestion_control)
+${BBR_STATUS}
+
+当前 TCP 拥塞控制
+$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo unknown)
 
 常用命令
 systemctl status ${SERVICE_NAME}
@@ -144,26 +219,17 @@ if (( PORT < 1 || PORT > 65535 )); then
   exit 1
 fi
 
-export DEBIAN_FRONTEND=noninteractive
-
-apt-get update
-apt-get install -y --no-install-recommends ca-certificates curl openssl python3 tar xz-utils libsodium23
+detect_pkg_manager
+install_dependencies
 
 need_cmd curl
 need_cmd python3
 need_cmd systemctl
 need_cmd tar
-need_cmd modprobe
 need_cmd sysctl
 
 if [[ -z "${PASSWORD}" ]]; then
   PASSWORD="$(openssl rand -base64 24 | tr -d '\n' | tr '/+' '_-')"
-fi
-
-if id -u "${SERVICE_USER}" >/dev/null 2>&1; then
-  :
-else
-  useradd --system --home "${INSTALL_DIR}" --shell /usr/sbin/nologin "${SERVICE_USER}"
 fi
 
 systemctl stop "${SERVICE_NAME}" >/dev/null 2>&1 || true
@@ -192,7 +258,6 @@ cat >"${INSTALL_DIR}/user-config.json" <<EOF
 }
 EOF
 
-chown -R "${SERVICE_USER}:${SERVICE_USER}" "${INSTALL_DIR}"
 chmod 600 "${INSTALL_DIR}/user-config.json"
 
 cat >/etc/systemd/system/${SERVICE_NAME}.service <<EOF
@@ -203,20 +268,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=${SERVICE_USER}
-Group=${SERVICE_USER}
 WorkingDirectory=${INSTALL_DIR}
 ExecStart=/usr/bin/python3 ${INSTALL_DIR}/shadowsocks/server.py -c ${INSTALL_DIR}/user-config.json
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=51200
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=full
-ProtectHome=true
-ReadWritePaths=${INSTALL_DIR}
 
 [Install]
 WantedBy=multi-user.target
@@ -225,13 +281,7 @@ EOF
 systemctl daemon-reload
 systemctl enable --now "${SERVICE_NAME}"
 
-if command -v ufw >/dev/null 2>&1; then
-  if ufw status 2>/dev/null | grep -q '^Status: active'; then
-    ufw allow "${PORT}/tcp" >/dev/null
-    ufw allow "${PORT}/udp" >/dev/null
-  fi
-fi
-
+configure_firewall
 enable_bbr
 
 HOST_DISPLAY="$(detect_host)"
