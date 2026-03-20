@@ -19,7 +19,7 @@ OBFS="${SSR_OBFS:-tls1.2_ticket_auth_compatible}"
 OBFS_PARAM="${SSR_OBFS_PARAM:-}"
 REMARKS="${SSR_REMARKS:-SSR-Server}"
 PKG_MANAGER=""
-PKG_FAMILY=""
+PYTHON_BIN=""
 BBR_STATUS="未检测"
 
 need_cmd() {
@@ -30,17 +30,20 @@ need_cmd() {
 }
 
 base64_nopad() {
-  python3 - "$1" <<'PY'
+  "${PYTHON_BIN}" - "$1" <<'PY'
 import base64
 import sys
 
 value = sys.argv[1].encode("utf-8")
-print(base64.urlsafe_b64encode(value).decode("ascii").rstrip("="))
+encoded = base64.urlsafe_b64encode(value)
+if hasattr(encoded, "decode"):
+    encoded = encoded.decode("ascii")
+print(encoded.rstrip("="))
 PY
 }
 
 json_escape() {
-  python3 - "$1" <<'PY'
+  "${PYTHON_BIN}" - "$1" <<'PY'
 import json
 import sys
 
@@ -61,17 +64,14 @@ detect_host() {
 detect_pkg_manager() {
   if command -v apt-get >/dev/null 2>&1; then
     PKG_MANAGER="apt-get"
-    PKG_FAMILY="deb"
     return
   fi
   if command -v dnf >/dev/null 2>&1; then
     PKG_MANAGER="dnf"
-    PKG_FAMILY="rpm"
     return
   fi
   if command -v yum >/dev/null 2>&1; then
     PKG_MANAGER="yum"
-    PKG_FAMILY="rpm"
     return
   fi
 
@@ -79,24 +79,83 @@ detect_pkg_manager() {
   exit 1
 }
 
+fix_centos7_repo_if_needed() {
+  if [[ "${PKG_MANAGER}" != "yum" ]]; then
+    return
+  fi
+  if [[ ! -f /etc/centos-release ]]; then
+    return
+  fi
+  if ! grep -q 'CentOS.*7' /etc/centos-release; then
+    return
+  fi
+  if [[ ! -f /etc/yum.repos.d/CentOS-Base.repo ]]; then
+    return
+  fi
+  if ! grep -q 'mirrorlist.centos.org' /etc/yum.repos.d/CentOS-Base.repo; then
+    return
+  fi
+
+  cp -n /etc/yum.repos.d/CentOS-Base.repo /etc/yum.repos.d/CentOS-Base.repo.bak
+  sed -i 's|^mirrorlist=|#mirrorlist=|g' /etc/yum.repos.d/CentOS-Base.repo
+  sed -i 's|^#baseurl=http://mirror.centos.org/centos/\$releasever|baseurl=http://vault.centos.org/7.9.2009|g' /etc/yum.repos.d/CentOS-Base.repo
+  yum clean all >/dev/null 2>&1 || true
+}
+
 install_dependencies() {
   case "${PKG_MANAGER}" in
     apt-get)
       export DEBIAN_FRONTEND=noninteractive
       apt-get update
-      apt-get install -y --no-install-recommends ca-certificates curl openssl python3 tar xz-utils
+      apt-get install -y --no-install-recommends ca-certificates curl openssl tar xz-utils
       ;;
     dnf)
-      dnf install -y ca-certificates curl openssl python3 tar xz
+      dnf install -y ca-certificates curl openssl tar xz
       ;;
     yum)
+      fix_centos7_repo_if_needed
       yum install -y ca-certificates curl openssl tar xz
-      if ! command -v python3 >/dev/null 2>&1; then
-        yum install -y epel-release || true
-        yum install -y python3
+      ;;
+  esac
+}
+
+detect_python() {
+  if command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="$(command -v python3)"
+    return
+  fi
+  if command -v python2 >/dev/null 2>&1; then
+    PYTHON_BIN="$(command -v python2)"
+    return
+  fi
+  if command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="$(command -v python)"
+    return
+  fi
+
+  case "${PKG_MANAGER}" in
+    apt-get)
+      apt-get install -y python3
+      PYTHON_BIN="$(command -v python3)"
+      ;;
+    dnf)
+      dnf install -y python3
+      PYTHON_BIN="$(command -v python3)"
+      ;;
+    yum)
+      yum install -y python || yum install -y python3
+      if command -v python >/dev/null 2>&1; then
+        PYTHON_BIN="$(command -v python)"
+      elif command -v python3 >/dev/null 2>&1; then
+        PYTHON_BIN="$(command -v python3)"
       fi
       ;;
   esac
+
+  [[ -n "${PYTHON_BIN}" ]] || {
+    echo "未找到可用的 Python 解释器"
+    exit 1
+  }
 }
 
 configure_firewall() {
@@ -176,6 +235,7 @@ print_summary() {
 安装完成
 upstream commit: ${UPSTREAM_COMMIT}
 package manager: ${PKG_MANAGER}
+python: ${PYTHON_BIN}
 
 Shadowrocket 手动填写
 host: ${host}
@@ -223,10 +283,11 @@ detect_pkg_manager
 install_dependencies
 
 need_cmd curl
-need_cmd python3
 need_cmd systemctl
 need_cmd tar
 need_cmd sysctl
+
+detect_python
 
 if [[ -z "${PASSWORD}" ]]; then
   PASSWORD="$(openssl rand -base64 24 | tr -d '\n' | tr '/+' '_-')"
@@ -269,7 +330,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=${INSTALL_DIR}
-ExecStart=/usr/bin/python3 ${INSTALL_DIR}/shadowsocks/server.py -c ${INSTALL_DIR}/user-config.json
+ExecStart=${PYTHON_BIN} ${INSTALL_DIR}/shadowsocks/server.py -c ${INSTALL_DIR}/user-config.json
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=51200

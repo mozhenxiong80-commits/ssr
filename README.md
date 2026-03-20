@@ -1,6 +1,6 @@
 # SSR 一键安装
 
-这个仓库放的是一份可审计的本地安装脚本，不是直接执行陌生人的远程脚本。当前合成脚本会自动识别 `apt-get / yum / dnf`，适用于 `Ubuntu 24.04` 和大多数 `CentOS / Rocky / AlmaLinux` 环境。
+这个仓库放的是一份可审计的本地安装脚本，不是直接执行陌生人的远程脚本。当前合成脚本会自动识别 `apt-get / yum / dnf`，适用于 `Ubuntu 24.04` 和大多数 `CentOS / Rocky / AlmaLinux` 环境；在 `CentOS 7` 上会自动修复到 `vault` 源，并优先使用系统自带 `python2.7`。
 
 ## SSH 一行安装
 
