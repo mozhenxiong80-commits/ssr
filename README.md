@@ -4,6 +4,12 @@
 
 ## SSH 一行安装
 
+如果你想一条命令同时装 `SSR + BBR`，直接执行：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/mozhenxiong80-commits/ssr/main/install-ssr-bbr-ubuntu24.sh)
+```
+
 建议把 `main` 替换成你自己的固定 commit 或 tag，再执行：
 
 ```bash
