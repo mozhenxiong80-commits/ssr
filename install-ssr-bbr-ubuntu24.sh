@@ -101,6 +101,53 @@ detect_pkg_manager() {
   exit 1
 }
 
+apt_lock_active() {
+  local lock_files=(
+    /var/lib/dpkg/lock-frontend
+    /var/lib/dpkg/lock
+    /var/cache/apt/archives/lock
+    /var/lib/apt/lists/lock
+  )
+  local lock_file=""
+
+  for lock_file in "${lock_files[@]}"; do
+    if command -v fuser >/dev/null 2>&1 && fuser "${lock_file}" >/dev/null 2>&1; then
+      return 0
+    fi
+    if command -v lsof >/dev/null 2>&1 && lsof "${lock_file}" >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+
+  if pgrep -x apt >/dev/null 2>&1 || pgrep -x apt-get >/dev/null 2>&1 || pgrep -x dpkg >/dev/null 2>&1; then
+    return 0
+  fi
+
+  return 1
+}
+
+wait_for_apt_lock() {
+  local waited=0
+  local max_wait=600
+
+  until ! apt_lock_active; do
+    if (( waited == 0 )); then
+      echo "检测到 apt/dpkg 正在被占用，等待锁释放..."
+    fi
+    if (( waited >= max_wait )); then
+      echo "等待 apt/dpkg 锁超时，请稍后重试"
+      exit 1
+    fi
+    sleep 5
+    ((waited += 5))
+  done
+}
+
+apt_get_safe() {
+  wait_for_apt_lock
+  apt-get "$@"
+}
+
 fix_centos7_repo_if_needed() {
   if [[ "${PKG_MANAGER}" != "yum" ]]; then
     return
@@ -128,8 +175,8 @@ install_dependencies() {
   case "${PKG_MANAGER}" in
     apt-get)
       export DEBIAN_FRONTEND=noninteractive
-      apt-get update
-      apt-get install -y --no-install-recommends ca-certificates curl openssl tar xz-utils
+      apt_get_safe update
+      apt_get_safe install -y --no-install-recommends ca-certificates curl openssl tar xz-utils
       ;;
     dnf)
       dnf install -y ca-certificates curl openssl tar xz
@@ -157,7 +204,7 @@ detect_python() {
 
   case "${PKG_MANAGER}" in
     apt-get)
-      apt-get install -y python3
+      apt_get_safe install -y python3
       PYTHON_BIN="$(command -v python3)"
       ;;
     dnf)
