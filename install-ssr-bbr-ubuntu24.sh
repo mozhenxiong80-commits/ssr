@@ -21,6 +21,7 @@ REMARKS="${SSR_REMARKS:-SSR-Server}"
 PKG_MANAGER=""
 PYTHON_BIN=""
 BBR_STATUS="未检测"
+MODE="${1:-install}"
 
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -338,46 +339,130 @@ sysctl net.ipv4.tcp_congestion_control
 EOF
 }
 
-[[ "${EUID}" -eq 0 ]] || {
-  echo "请使用 root 运行，例如: sudo bash install-ssr-bbr-ubuntu24.sh"
-  exit 1
+current_port_from_config() {
+  local config_file="${INSTALL_DIR}/user-config.json"
+  local parser=""
+  [[ -f "${config_file}" ]] || return 0
+
+  if command -v python3 >/dev/null 2>&1; then
+    parser="$(command -v python3)"
+  elif command -v python2 >/dev/null 2>&1; then
+    parser="$(command -v python2)"
+  elif command -v python >/dev/null 2>&1; then
+    parser="$(command -v python)"
+  else
+    return 0
+  fi
+
+  "${parser}" - "${config_file}" <<'PY' 2>/dev/null || true
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as f:
+    data = json.load(f)
+print(data.get("server_port", ""))
+PY
 }
 
-detect_pkg_manager
-install_dependencies
+remove_firewall_rules() {
+  local port="$1"
+  [[ -n "${port}" ]] || return 0
 
-need_cmd curl
-need_cmd systemctl
-need_cmd tar
-need_cmd sysctl
+  if command -v ufw >/dev/null 2>&1; then
+    ufw delete allow "${port}/tcp" >/dev/null 2>&1 || true
+    ufw delete allow "${port}/udp" >/dev/null 2>&1 || true
+  fi
 
-detect_python
-
-if [[ "${PORT}" == "random" || "${PORT}" == "RANDOM" ]]; then
-  PORT="$(random_port)"
-fi
-
-[[ "${PORT}" =~ ^[0-9]+$ ]] || {
-  echo "SSR_PORT 必须是数字，或者使用 SSR_PORT=random"
-  exit 1
+  if command -v firewall-cmd >/dev/null 2>&1; then
+    firewall-cmd --permanent --remove-port="${port}/tcp" >/dev/null 2>&1 || true
+    firewall-cmd --permanent --remove-port="${port}/udp" >/dev/null 2>&1 || true
+    firewall-cmd --reload >/dev/null 2>&1 || true
+  fi
 }
 
-if (( PORT < 1 || PORT > 65535 )); then
-  echo "SSR_PORT 必须在 1-65535 之间"
-  exit 1
-fi
+uninstall_ssr() {
+  local existing_port=""
 
-if [[ -z "${PASSWORD}" ]]; then
-  PASSWORD="$(openssl rand -base64 24 | tr -d '\n' | tr '/+' '_-')"
-fi
+  existing_port="$(current_port_from_config)"
 
-systemctl stop "${SERVICE_NAME}" >/dev/null 2>&1 || true
-rm -rf "${INSTALL_DIR}"
-mkdir -p "${INSTALL_DIR}"
+  systemctl stop "${SERVICE_NAME}" >/dev/null 2>&1 || true
+  systemctl disable "${SERVICE_NAME}" >/dev/null 2>&1 || true
+  rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
+  systemctl daemon-reload >/dev/null 2>&1 || true
 
-curl -fsSL "${REPO_TARBALL_URL}" | tar -xzf - --strip-components=1 -C "${INSTALL_DIR}"
+  remove_firewall_rules "${existing_port}"
+  rm -rf "${INSTALL_DIR}"
 
-cat >"${INSTALL_DIR}/user-config.json" <<EOF
+  cat <<EOF
+
+卸载完成
+service: ${SERVICE_NAME}
+removed dir: ${INSTALL_DIR}
+removed port rules: ${existing_port:-none}
+BBR 配置保留不动
+EOF
+}
+
+show_status() {
+  local service_state="inactive"
+  local port=""
+
+  if systemctl is-active --quiet "${SERVICE_NAME}" 2>/dev/null; then
+    service_state="active"
+  fi
+
+  port="$(current_port_from_config)"
+
+  cat <<EOF
+
+当前状态
+service: ${SERVICE_NAME}
+status: ${service_state}
+install dir: ${INSTALL_DIR}
+port: ${port:-unknown}
+tcp congestion control: $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo unknown)
+EOF
+
+  systemctl --no-pager -l status "${SERVICE_NAME}" 2>/dev/null | sed -n '1,18p' || true
+}
+
+install_ssr() {
+  detect_pkg_manager
+  install_dependencies
+
+  need_cmd curl
+  need_cmd systemctl
+  need_cmd tar
+  need_cmd sysctl
+
+  detect_python
+
+  if [[ "${PORT}" == "random" || "${PORT}" == "RANDOM" ]]; then
+    PORT="$(random_port)"
+  fi
+
+  [[ "${PORT}" =~ ^[0-9]+$ ]] || {
+    echo "SSR_PORT 必须是数字，或者使用 SSR_PORT=random"
+    exit 1
+  }
+
+  if (( PORT < 1 || PORT > 65535 )); then
+    echo "SSR_PORT 必须在 1-65535 之间"
+    exit 1
+  fi
+
+  if [[ -z "${PASSWORD}" ]]; then
+    PASSWORD="$(openssl rand -base64 24 | tr -d '\n' | tr '/+' '_-')"
+  fi
+
+  systemctl stop "${SERVICE_NAME}" >/dev/null 2>&1 || true
+  rm -rf "${INSTALL_DIR}"
+  mkdir -p "${INSTALL_DIR}"
+
+  curl -fsSL "${REPO_TARBALL_URL}" | tar -xzf - --strip-components=1 -C "${INSTALL_DIR}"
+
+  cat >"${INSTALL_DIR}/user-config.json" <<EOF
 {
   "server": "0.0.0.0",
   "server_ipv6": "::",
@@ -397,9 +482,9 @@ cat >"${INSTALL_DIR}/user-config.json" <<EOF
 }
 EOF
 
-chmod 600 "${INSTALL_DIR}/user-config.json"
+  chmod 600 "${INSTALL_DIR}/user-config.json"
 
-cat >/etc/systemd/system/${SERVICE_NAME}.service <<EOF
+  cat >/etc/systemd/system/${SERVICE_NAME}.service <<EOF
 [Unit]
 Description=ShadowsocksR Server
 After=network-online.target
@@ -417,11 +502,33 @@ LimitNOFILE=51200
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload
-systemctl enable --now "${SERVICE_NAME}"
+  systemctl daemon-reload
+  systemctl enable --now "${SERVICE_NAME}"
 
-configure_firewall
-enable_bbr
+  configure_firewall
+  enable_bbr
 
-HOST_DISPLAY="$(detect_host)"
-print_summary "${HOST_DISPLAY}"
+  HOST_DISPLAY="$(detect_host)"
+  print_summary "${HOST_DISPLAY}"
+}
+
+[[ "${EUID}" -eq 0 ]] || {
+  echo "请使用 root 运行，例如: sudo bash install-ssr-bbr-ubuntu24.sh"
+  exit 1
+}
+
+case "${MODE}" in
+  install)
+    install_ssr
+    ;;
+  uninstall)
+    uninstall_ssr
+    ;;
+  status)
+    show_status
+    ;;
+  *)
+    echo "用法: bash install-ssr-bbr-ubuntu24.sh [install|uninstall|status]"
+    exit 1
+    ;;
+esac

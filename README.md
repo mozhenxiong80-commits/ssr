@@ -12,6 +12,12 @@
 bash <(curl -fsSL https://raw.githubusercontent.com/mozhenxiong80-commits/ssr/main/install-ssr-bbr.sh)
 ```
 
+现在这个入口会弹菜单，支持：
+
+- 安装 `SSR + BBR`
+- 卸载 `SSR`
+- 查看状态
+
 如果你想随机端口：
 
 ```bash
